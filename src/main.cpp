@@ -160,6 +160,26 @@ vector<double> getXY(double s, double d, vector<double> maps_s, vector<double> m
 
 }
 
+#define SAFE_FWD_DISTANCE 30
+#define SAFE_BWD_DISTANCE 15.0
+bool check_collision(vector<double> sensor_fusion,double horizon, double car_s){
+
+    bool ret = false;
+    double vx =sensor_fusion[3];
+    double vy =sensor_fusion[4];
+    double s_end =sensor_fusion[5];
+    double speed = sqrt(vx*vx + vy*vy);
+
+    s_end += speed * (horizon);
+    if((s_end > car_s)  && ((s_end - car_s) < SAFE_FWD_DISTANCE)){
+        ret = true;
+    }
+    // if((s_end < car_s) && ((car_s - s_end) < SAFE_BWD_DISTANCE)){
+    //     ret = true;
+    // }
+    return ret;
+}
+
 int main() {
     uWS::Hub h;
 
@@ -197,8 +217,9 @@ int main() {
         map_waypoints_dy.push_back(d_y);
     }
 
-       double ref_vel = 0; //in Mph
-    h.onMessage([&ref_vel, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+    double ref_vel = 0; //in Mph
+    int lane = 1;
+    h.onMessage([&lane, &ref_vel, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                 uWS::OpCode opCode) {
             // "42" at the start of the message means there's a websocket message event.
             // The 4 signifies a websocket message
@@ -236,7 +257,6 @@ int main() {
             auto sensor_fusion = j[1]["sensor_fusion"];
 
             int prev_size = previous_path_x.size();
-            const int lane = 1;
             const double laneWidth =4;
             const double sampling = 0.02;
             const double safeDistance = 30;
@@ -253,32 +273,95 @@ int main() {
                 car_s = end_path_s;
             }
 
+
             for(int i = 0; i < sensor_fusion.size(); ++i){
                 double d = sensor_fusion[i][6];
                 if(d > (laneWidth * lane) && d < (laneWidth * (lane + 1))){
                     //this car is in my lane
-                    //calculate it's s at the end of previous waypoints
+                    //calculate     it's s at the end of previous waypoints
                     double vx =sensor_fusion[i][3];
                     double vy =sensor_fusion[i][4];
                     double s_end =sensor_fusion[i][5];
                     double speed = sqrt(vx*vx + vy*vy);
 
-                    s_end += speed * (prev_size * sampling);
-                    if((s_end > car_s)  && ((s_end - car_s) < safeDistance)){
-                        
+                    s_end += speed * prev_size * sampling;
+                    if((s_end > car_s)  && ((s_end - car_s) < SAFE_FWD_DISTANCE)){
                         too_close = true;
                     }
                 }
             }
 
             if(too_close){
+                //cout<<"Too close"<<endl;
                 ref_vel -= vel_step;
+                int proposed_lane;
+                bool left_collision = false;
+                bool right_collision = false;
+                bool changed_lane = false;
+                if((lane - 1) >= 0) {
+                    //cout<<"Checking Left lane"<<endl;
+                    proposed_lane = lane - 1;
+                    for(int i = 0; i < sensor_fusion.size(); ++i){
+                        double d = sensor_fusion[i][6];
+                        if(d > (laneWidth * proposed_lane) && d < (laneWidth * (proposed_lane + 1))){
+                            //this car is in my lane
+                            //calculate it's s at the end of previous waypoints
+                            double vx =sensor_fusion[i][3];
+                            double vy =sensor_fusion[i][4];
+                            double s_end =sensor_fusion[i][5];
+                            double speed = sqrt(vx*vx + vy*vy);
+
+                            s_end += speed * prev_size * sampling;
+                            if((s_end > car_s)  && ((s_end - car_s) < SAFE_FWD_DISTANCE)){
+                                left_collision =  true;
+                            }
+                            if((s_end < car_s)  && ((car_s - s_end) < SAFE_BWD_DISTANCE)){
+                                left_collision =  true;
+                            }
+
+                        }
+                    }
+                    //cout<<"Left lane collision "<< left_collision<<endl;
+                    if(! left_collision){
+                        lane = proposed_lane;
+                        changed_lane = true;
+                    }
+
+                }
+                if((lane + 1 < 3) && !changed_lane ){
+                    //cout<<"Checking right lane"<<endl;
+                    proposed_lane = lane + 1;
+                    for(int i = 0; i < sensor_fusion.size(); ++i){
+                        double d = sensor_fusion[i][6];
+                        if(d > (laneWidth * proposed_lane) && d < (laneWidth * (proposed_lane + 1))){
+                            //this car is in my lane
+                            //calculate it's s at the end of previous waypoints
+                            double vx =sensor_fusion[i][3];
+                            double vy =sensor_fusion[i][4];
+                            double s_end =sensor_fusion[i][5];
+                            double speed = sqrt(vx*vx + vy*vy);
+
+                            s_end += speed * prev_size * sampling;
+                            if((s_end > car_s)  && ((s_end - car_s) < SAFE_FWD_DISTANCE)){
+                                right_collision = true;
+                            }
+                            if((s_end < car_s)  && ((car_s - s_end) < SAFE_BWD_DISTANCE)){
+                                right_collision = true;
+                            }
+
+                        }
+                    }
+                    //cout<<"Right lane collision "<< right_collision<<endl;
+                    if(! right_collision){
+                        lane = proposed_lane;
+                    }
+                }
             }
             else if(ref_vel < desired_vel){
-                ref_vel += vel_step;
+                ref_vel += 1.5 * vel_step ;
             }
             if(prev_size < 2){
-                
+
                 ref_x = car_x;
                 ref_y = car_y;
                 ref_yaw = deg2rad(car_yaw);
