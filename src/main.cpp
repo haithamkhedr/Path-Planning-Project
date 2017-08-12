@@ -197,7 +197,8 @@ int main() {
         map_waypoints_dy.push_back(d_y);
     }
 
-    h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+       double ref_vel = 0; //in Mph
+    h.onMessage([&ref_vel, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                 uWS::OpCode opCode) {
             // "42" at the start of the message means there's a websocket message event.
             // The 4 signifies a websocket message
@@ -236,13 +237,46 @@ int main() {
 
             int prev_size = previous_path_x.size();
             const int lane = 1;
-            const double ref_vel = 49.5; //in Mph
+            const double laneWidth =4;
+            const double sampling = 0.02;
+            const double safeDistance = 30;
+            const double desired_vel  = 49;
+            const double vel_step = 0.224;
             vector<double> ptsx;
             vector<double> ptsy;
             double ref_x;
             double ref_y;
             double ref_yaw;
+            bool too_close = false;
 
+            if(prev_size > 0){
+                car_s = end_path_s;
+            }
+
+            for(int i = 0; i < sensor_fusion.size(); ++i){
+                double d = sensor_fusion[i][6];
+                if(d > (laneWidth * lane) && d < (laneWidth * (lane + 1))){
+                    //this car is in my lane
+                    //calculate it's s at the end of previous waypoints
+                    double vx =sensor_fusion[i][3];
+                    double vy =sensor_fusion[i][4];
+                    double s_end =sensor_fusion[i][5];
+                    double speed = sqrt(vx*vx + vy*vy);
+
+                    s_end += speed * (prev_size * sampling);
+                    if((s_end > car_s)  && ((s_end - car_s) < safeDistance)){
+                        
+                        too_close = true;
+                    }
+                }
+            }
+
+            if(too_close){
+                ref_vel -= vel_step;
+            }
+            else if(ref_vel < desired_vel){
+                ref_vel += vel_step;
+            }
             if(prev_size < 2){
                 
                 ref_x = car_x;
@@ -272,9 +306,9 @@ int main() {
             }
 
             //Generate some more waypoints after the last executed waypoint
-            vector<double> wp0 = getXY(car_s + 30 , (2 + 4*lane), map_waypoints_s,map_waypoints_x,map_waypoints_y);
-            vector<double> wp1 = getXY(car_s + 60 , (2 + 4*lane), map_waypoints_s,map_waypoints_x,map_waypoints_y);
-            vector<double> wp2 = getXY(car_s + 90 , (2 + 4*lane), map_waypoints_s,map_waypoints_x,map_waypoints_y);
+            vector<double> wp0 = getXY(car_s + 30 , (laneWidth/2 + laneWidth*lane), map_waypoints_s,map_waypoints_x,map_waypoints_y);
+            vector<double> wp1 = getXY(car_s + 60 , (laneWidth/2 + laneWidth*lane), map_waypoints_s,map_waypoints_x,map_waypoints_y);
+            vector<double> wp2 = getXY(car_s + 90 , (laneWidth/2 + laneWidth*lane), map_waypoints_s,map_waypoints_x,map_waypoints_y);
             ptsx.push_back(wp0[0]);
             ptsx.push_back(wp1[0]);
             ptsx.push_back(wp2[0]);
@@ -308,7 +342,7 @@ int main() {
             double x_add_on = 0;
 
             for(int i=0; i < 50 - prev_size; ++i){
-                int N = dist_horizon / (0.02*ref_vel/2.24);
+                int N = dist_horizon / (sampling*ref_vel/2.24);
                 double x = x_add_on + x_horizon / N;
                 double y = s(x);
                 x_add_on = x;
