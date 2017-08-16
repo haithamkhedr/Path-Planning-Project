@@ -358,7 +358,7 @@ int main() {
                 }
             }
             else if(ref_vel < desired_vel){
-                ref_vel += 1.5 * vel_step ;
+                ref_vel += 1.2 * vel_step ;
             }
             if(prev_size < 2){
 
